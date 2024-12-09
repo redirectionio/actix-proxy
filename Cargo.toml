@@ -1,0 +1,60 @@
+[package]
+name = "redirectionio-actix-proxy"
+version = "0.1.0"
+authors = ["Joel Wurtz <joel.wurtz@gmail.com>"]
+edition = "2018"
+
+[features]
+default = []
+# TLS via OpenSSL
+openssl = ["tls-openssl", "actix-tls/openssl", "awc/openssl"]
+# TLS via Rustls v0.20
+rustls = ["rustls-0_20"]
+# TLS via Rustls v0.20
+rustls-0_20 = ["tls-rustls-0_20", "actix-tls/rustls-0_20", "awc/rustls-0_20"]
+# TLS via Rustls v0.21
+rustls-0_21 = ["tls-rustls-0_21", "actix-tls/rustls-0_21", "awc/rustls-0_21"]
+# TLS via Rustls v0.22 (WebPKI roots)
+rustls-0_22-webpki-roots = ["tls-rustls-0_22", "actix-tls/rustls-0_22-webpki-roots", "awc/rustls-0_22-webpki-roots"]
+# TLS via Rustls v0.22 (Native roots)
+rustls-0_22-native-roots = ["tls-rustls-0_22", "actix-tls/rustls-0_22-native-roots", "awc/rustls-0_22-native-roots"]
+# TLS via Rustls v0.23
+rustls-0_23 = ["tls-rustls-0_23", "actix-tls/rustls-0_23", "awc/rustls-0_23"]
+# TLS via Rustls v0.23 (WebPKI roots)
+rustls-0_23-webpki-roots = ["rustls-0_23", "actix-tls/rustls-0_23-webpki-roots", "awc/rustls-0_23-webpki-roots"]
+# TLS via Rustls v0.23 (Native roots)
+rustls-0_23-native-roots = ["rustls-0_23", "actix-tls/rustls-0_23-native-roots", "awc/rustls-0_23-native-roots"]
+
+[dependencies]
+actix = "0.13.5"
+actix-rt = "2.10.0"
+actix-http = "3.9.0"
+actix-service = "2.0.2"
+actix-tls = "3.4.0"
+actix-web = { version = "4.9.0" }
+awc = { version = "3.5.1" }
+bytes = "1.9.0"
+futures = "0.3.31"
+futures-util = "0.3.30"
+lazy_static = "1.5.0"
+tokio = "1.41.1"
+tokio-util = "0.7.12"
+tracing = "0.1.41"
+
+tls-openssl = { package = "openssl", version = "0.10.55", optional = true }
+tls-rustls-0_20 = { package = "rustls", version = "0.20", optional = true, features = ["dangerous_configuration"] }
+tls-rustls-0_21 = { package = "rustls", version = "0.21", optional = true, features = ["dangerous_configuration"] }
+tls-rustls-0_22 = { package = "rustls", version = "0.22", optional = true }
+tls-rustls-0_23 = { package = "rustls", version = "0.23", optional = true, default-features = false }
+cfg-if = "1.0.0"
+base64 = "0.22.1"
+cookie = "0.16.2"
+rand = "0.8.5"
+
+[dev-dependencies]
+actix-test = "0.1"
+tls-rustls-0_23 = { package = "rustls", version = "0.23", default-features = false, features = ["ring"] }
+
+[[example]]
+name = "http_proxy"
+required-features = ["rustls-0_23-webpki-roots"]
