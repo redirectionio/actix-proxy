@@ -1,5 +1,5 @@
 use crate::forwarder::Forwarder;
-use crate::peer_resolver::PeerResolver;
+use crate::peer_resolver::HttpPeerResolver;
 use actix_service::boxed::BoxService;
 use actix_web::{
     body::BoxBody,
@@ -8,9 +8,9 @@ use actix_web::{
     FromRequest, HttpResponse, ResponseError,
 };
 use futures_util::future::LocalBoxFuture;
+use std::cell::RefCell;
 use std::ops::Deref;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
 use tokio::task::JoinHandle;
 
 type HttpService = BoxService<ServiceRequest, ServiceResponse, Error>;
@@ -29,8 +29,8 @@ impl Deref for ProxyService {
 pub struct ProxyServiceInner {
     pub(crate) forwarder: Rc<Forwarder>,
     // @TODO: we should retain a better object so we can transfer existing connection on restart
-    pub(crate) handlers: Rc<Mutex<Vec<JoinHandle<()>>>>,
-    pub(crate) peer_resolver: Arc<dyn PeerResolver>,
+    pub(crate) handlers: Rc<RefCell<Vec<JoinHandle<()>>>>,
+    pub(crate) peer_resolver: Rc<HttpPeerResolver>,
     pub(crate) default: Option<HttpService>,
 }
 
@@ -66,17 +66,23 @@ impl Service<ServiceRequest> for ProxyService {
                 }
             };
 
-            let http_peer = match this.0.peer_resolver.resolve_peer(&downstream_request_head) {
+            let fut = this
+                .0
+                .peer_resolver
+                .call(downstream_request_head)
+                .await
+                .expect("peer resolver failed");
+
+            let http_peer = match fut.peer {
                 Some(peer) => peer,
                 None => match this.0.default.as_ref() {
                     Some(default) => {
-                        return default.call(ServiceRequest::from_request(downstream_request_head)).await;
+                        return default.call(ServiceRequest::from_request(fut.req)).await;
                     }
                     None => {
                         tracing::error!("cannot resolve peer for request");
 
-                        return Ok(ServiceRequest::from_request(downstream_request_head)
-                            .into_response(HttpResponse::ServiceUnavailable().finish()));
+                        return Ok(ServiceRequest::from_request(fut.req).into_response(HttpResponse::ServiceUnavailable().finish()));
                     }
                 },
             };
@@ -84,31 +90,22 @@ impl Service<ServiceRequest> for ProxyService {
             let (upstream_response, handler) = match this
                 .0
                 .forwarder
-                .forward(&downstream_request_head, downstream_body, http_peer, origin_hostname)
+                .forward(&fut.req, downstream_body, http_peer, origin_hostname)
                 .await
             {
                 Ok((response, handler)) => (response, handler),
                 Err(err) => {
                     tracing::error!("cannot forward request: {}", err);
 
-                    return Ok(ServiceRequest::from_request(downstream_request_head).into_response(err.error_response()));
+                    return Ok(ServiceRequest::from_request(fut.req).into_response(err.error_response()));
                 }
             };
 
             if let Some(handler) = handler {
-                match this.0.handlers.lock().as_mut() {
-                    Ok(h) => {
-                        h.push(handler);
-                    }
-                    Err(err) => {
-                        tracing::error!("cannot register upgrade handler: {}", err);
-
-                        handler.abort();
-                    }
-                }
+                this.0.handlers.borrow_mut().push(handler);
             }
 
-            Ok(ServiceRequest::from_request(downstream_request_head).into_response(upstream_response))
+            Ok(ServiceRequest::from_request(fut.req).into_response(upstream_response))
         })
     }
 }

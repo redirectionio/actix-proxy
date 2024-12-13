@@ -1,6 +1,7 @@
 use crate::forwarder::forward_header::ForwardedFor;
 use std::collections::HashSet;
 use std::net::SocketAddr;
+use std::time::Duration;
 
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct ViaHeader {
@@ -21,6 +22,7 @@ pub struct HttpPeer {
     pub(crate) force_close: bool,
     pub(crate) tls: bool,
     pub(crate) request_body_size_limit: usize,
+    pub(crate) timeout: Option<Duration>,
 }
 
 impl HttpPeer {
@@ -37,6 +39,7 @@ impl HttpPeer {
             force_close: false,
             tls: address.port() == 443,
             request_body_size_limit: 1024 * 1024 * 16, // 16MB
+            timeout: None,
         }
     }
 
@@ -91,6 +94,13 @@ impl HttpPeer {
     /// Set whether the connection should be encrypted using TLS when connecting to the peer.
     pub fn tls(mut self, tls: bool) -> Self {
         self.tls = tls;
+        self
+    }
+
+    /// Set the timeout for the request to the peer.
+    /// If the timeout is reached, the request will be aborted and an error will be returned to the client.
+    pub fn timeout(mut self, timeout: Duration) -> Self {
+        self.timeout = Some(timeout);
         self
     }
 

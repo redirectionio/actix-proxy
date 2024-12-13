@@ -25,8 +25,8 @@ use std::collections::HashSet;
 use std::future::Future;
 use std::option::Option::None;
 use std::pin::Pin;
+use std::rc::Rc;
 use std::str::FromStr;
-use std::sync::Arc;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_util::codec::{BytesCodec, FramedRead};
@@ -64,7 +64,7 @@ impl Forwarder {
         &self,
         downstream_request_head: &HttpRequest,
         downstream_body: Payload,
-        peer: Arc<HttpPeer>,
+        peer: Rc<HttpPeer>,
         origin_hostname: String,
     ) -> Result<(HttpResponse, Option<JoinHandle<()>>), ForwardError> {
         let mut upstream_request_head = RequestHead::default();
@@ -218,6 +218,10 @@ impl Forwarder {
             upstream_request = upstream_request.force_close();
         }
 
+        if let Some(timeout) = peer.timeout {
+            upstream_request = upstream_request.timeout(timeout);
+        }
+
         let stream = match downstream_request_head
             .headers()
             .get(header::CONTENT_LENGTH)
@@ -270,7 +274,7 @@ impl Forwarder {
 
     async fn upgrade(
         &self,
-        peer: Arc<HttpPeer>,
+        peer: Rc<HttpPeer>,
         upstream_request_head: RequestHead,
         downstream_body: Payload,
     ) -> Result<(HttpResponse, Option<JoinHandle<()>>), ForwardError> {
@@ -321,7 +325,7 @@ impl Forwarder {
     }
 
     fn map_headers(
-        peer: Arc<HttpPeer>,
+        peer: Rc<HttpPeer>,
         response_builder: &mut HttpResponseBuilder,
         version: Version,
         status: StatusCode,

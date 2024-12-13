@@ -1,6 +1,7 @@
 use crate::forwarder::Forwarder;
-use crate::peer_resolver::{PeerResolver, ToPeerResolver};
+use crate::peer_resolver::{HttpPeerResolve, HttpPeerResolver};
 use crate::service::{ProxyService, ProxyServiceInner};
+use crate::HttpPeer;
 use actix_service::boxed::BoxServiceFactory;
 use actix_service::{boxed, IntoServiceFactory, ServiceFactory, ServiceFactoryExt};
 use actix_web::dev::ResourceDef;
@@ -12,21 +13,29 @@ use actix_web::{
 use futures_util::future::LocalBoxFuture;
 use std::cell::RefCell;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
 
 type HttpNewService = BoxServiceFactory<(), ServiceRequest, ServiceResponse, Error, ()>;
 
 pub struct Proxy {
-    peer_resolver: Arc<dyn PeerResolver>,
+    peer_resolver: Rc<HttpPeerResolver>,
     forwarder: Rc<Forwarder>,
     default: Rc<RefCell<Option<Rc<HttpNewService>>>>,
     guards: Vec<Rc<dyn Guard>>,
 }
 
 impl Proxy {
-    pub fn new<T: ToPeerResolver>(peer_resolver: T) -> Self {
+    pub fn new(peer: HttpPeer) -> Self {
         Self {
-            peer_resolver: peer_resolver.to_peer_resolver(),
+            peer_resolver: Rc::new(HttpPeerResolver::Static(Rc::new(peer))),
+            forwarder: Rc::new(Forwarder::new()),
+            default: Rc::new(RefCell::new(None)),
+            guards: Vec::new(),
+        }
+    }
+
+    pub fn new_custom(peer_resolver: Rc<dyn HttpPeerResolve>) -> Self {
+        Self {
+            peer_resolver: Rc::new(HttpPeerResolver::Custom(peer_resolver)),
             forwarder: Rc::new(Forwarder::new()),
             default: Rc::new(RefCell::new(None)),
             guards: Vec::new(),
@@ -99,7 +108,7 @@ impl ServiceFactory<ServiceRequest> for Proxy {
     fn new_service(&self, _cfg: Self::Config) -> Self::Future {
         let mut inner = ProxyServiceInner {
             forwarder: self.forwarder.clone(),
-            handlers: Rc::new(Mutex::new(Vec::new())),
+            handlers: Rc::new(RefCell::new(Vec::new())),
             peer_resolver: self.peer_resolver.clone(),
             default: None,
         };

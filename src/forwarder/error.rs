@@ -22,7 +22,7 @@ impl fmt::Display for ForwardError {
         match self {
             Self::UriError(_) => f.write_str("could not build request from origin"),
             Self::ConnectUpstreamError(_) => f.write_str("cannot connect to upstream"),
-            Self::SendRequestUpstreamError(_) => f.write_str("cannot send request to upstream"),
+            Self::SendRequestUpstreamError(e) => write!(f, "cannot send request to upstream: {}", e),
             Self::ReadBodyError(_) => f.write_str("cannot read body"),
             Self::BodyTooLarge(_) => f.write_str("body is too large"),
         }

@@ -9,5 +9,5 @@ mod service;
 
 pub use forwarder::forward_header::ForwardedFor;
 pub use peer::HttpPeer;
-pub use peer_resolver::PeerResolver;
+pub use peer_resolver::HttpPeerResolve;
 pub use proxy::Proxy;
