@@ -9,7 +9,6 @@ use crate::forwarder::error::ForwardError;
 use actix::prelude::Stream;
 use actix_http::body::{BodyStream, MessageBody, SizedStream};
 use actix_http::header::{HeaderMap, HeaderName, TryIntoHeaderValue};
-use actix_rt::task::JoinHandle;
 use actix_service::Service;
 use actix_web::dev::RequestHead;
 use actix_web::error::PayloadError;
@@ -29,6 +28,7 @@ use std::rc::Rc;
 use std::str::FromStr;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::task::{spawn_local, JoinHandle};
 use tokio_util::codec::{BytesCodec, FramedRead};
 
 lazy_static! {
@@ -319,7 +319,9 @@ impl Forwarder {
             buf: vec![0; 8096].into_boxed_slice(),
         };
 
-        let handle = actix_rt::spawn(copy_future);
+        // @TODO Instead of spawning a new task, we could create a specific Body that implements
+        // pipelining between the two streams
+        let handle = spawn_local(copy_future);
 
         Ok((response_builder.streaming(response_stream), Some(handle)))
     }

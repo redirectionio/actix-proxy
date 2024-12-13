@@ -52,7 +52,10 @@ cookie = "0.16.2"
 rand = "0.8.5"
 
 [dev-dependencies]
+actix-codec = "0.5.2"
+actix-http-test = "3.2.0"
 actix-test = "0.1"
+actix-ws = "0.3.0"
 tls-rustls-0_23 = { package = "rustls", version = "0.23", default-features = false, features = ["ring"] }
 
 [[example]]
