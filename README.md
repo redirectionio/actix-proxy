@@ -1,8 +1,8 @@
 # Actix proxy service
 
-Proxy service for Actix Web.
+Reverse HTTP and websocket service for Actix Web.
 
-Provides a proxy service for Actix Web that can be used to proxy requests to a target server.
+Provides a service for Actix Web that can be used to proxy requests from client to another server.
 
 ## Examples
 
