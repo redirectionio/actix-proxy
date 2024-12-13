@@ -2,7 +2,7 @@
 name = "redirectionio-actix-proxy"
 version = "0.1.0"
 authors = ["Joel Wurtz <joel.wurtz@gmail.com>"]
-edition = "2018"
+edition = "2021"
 
 [features]
 default = []
@@ -47,9 +47,6 @@ tls-rustls-0_21 = { package = "rustls", version = "0.21", optional = true, featu
 tls-rustls-0_22 = { package = "rustls", version = "0.22", optional = true }
 tls-rustls-0_23 = { package = "rustls", version = "0.23", optional = true, default-features = false }
 cfg-if = "1.0.0"
-base64 = "0.22.1"
-cookie = "0.16.2"
-rand = "0.8.5"
 
 [dev-dependencies]
 actix-codec = "0.5.2"
