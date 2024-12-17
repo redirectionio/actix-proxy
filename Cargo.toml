@@ -3,6 +3,10 @@ name = "redirectionio-actix-proxy"
 version = "0.1.0"
 authors = ["Joel Wurtz <joel.wurtz@gmail.com>"]
 edition = "2021"
+description = "Actix web reverse HTTP and Websocket proxy"
+license = "MIT"
+license-file = "LICENSE.md"
+repository = "https://github.com/redirectionio/actix-proxy"
 
 [features]
 default = []
