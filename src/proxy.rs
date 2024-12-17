@@ -1,3 +1,4 @@
+use crate::error::ProxyError;
 use crate::forwarder::Forwarder;
 use crate::peer_resolver::{HttpPeerResolve, HttpPeerResolver};
 use crate::service::{ProxyService, ProxyServiceInner};
@@ -8,18 +9,20 @@ use actix_web::dev::ResourceDef;
 use actix_web::{
     dev::{AppService, HttpServiceFactory, ServiceRequest, ServiceResponse},
     guard::Guard,
-    Error,
+    Error, HttpResponse,
 };
 use futures_util::future::LocalBoxFuture;
 use std::cell::RefCell;
 use std::rc::Rc;
 
 type HttpNewService = BoxServiceFactory<(), ServiceRequest, ServiceResponse, Error, ()>;
+type ErrorNewService = BoxServiceFactory<(), ProxyError, HttpResponse, Error, ()>;
 
 pub struct Proxy {
     peer_resolver: Rc<HttpPeerResolver>,
     forwarder: Rc<Forwarder>,
     default: Rc<RefCell<Option<Rc<HttpNewService>>>>,
+    error: Rc<RefCell<Option<Rc<ErrorNewService>>>>,
     guards: Vec<Rc<dyn Guard>>,
 }
 
@@ -29,6 +32,7 @@ impl Proxy {
             peer_resolver: Rc::new(HttpPeerResolver::Static(Rc::new(peer))),
             forwarder: Rc::new(Forwarder::new()),
             default: Rc::new(RefCell::new(None)),
+            error: Rc::new(RefCell::new(None)),
             guards: Vec::new(),
         }
     }
@@ -38,6 +42,7 @@ impl Proxy {
             peer_resolver: Rc::new(HttpPeerResolver::Custom(peer_resolver)),
             forwarder: Rc::new(Forwarder::new()),
             default: Rc::new(RefCell::new(None)),
+            error: Rc::new(RefCell::new(None)),
             guards: Vec::new(),
         }
     }
@@ -61,6 +66,17 @@ impl Proxy {
     {
         // create and configure default resource
         self.default = Rc::new(RefCell::new(Some(Rc::new(boxed::factory(f.into_factory().map_init_err(|_| ()))))));
+
+        self
+    }
+
+    pub fn error_handler<F, U>(mut self, f: F) -> Self
+    where
+        F: IntoServiceFactory<U, ProxyError>,
+        U: ServiceFactory<ProxyError, Config = (), Response = HttpResponse, Error = Error> + 'static,
+    {
+        // create and configure default resource
+        self.error = Rc::new(RefCell::new(Some(Rc::new(boxed::factory(f.into_factory().map_init_err(|_| ()))))));
 
         self
     }
@@ -108,24 +124,24 @@ impl ServiceFactory<ServiceRequest> for Proxy {
     fn new_service(&self, _cfg: Self::Config) -> Self::Future {
         let mut inner = ProxyServiceInner {
             forwarder: self.forwarder.clone(),
-            handlers: Rc::new(RefCell::new(Vec::new())),
             peer_resolver: self.peer_resolver.clone(),
             default: None,
+            error: None,
         };
 
-        if let Some(ref default) = *self.default.borrow() {
-            let fut = default.new_service(());
-            Box::pin(async {
-                match fut.await {
-                    Ok(default) => {
-                        inner.default = Some(default);
-                        Ok(ProxyService(Rc::new(inner)))
-                    }
-                    Err(_) => Err(()),
-                }
-            })
-        } else {
-            Box::pin(async move { Ok(ProxyService(Rc::new(inner))) })
-        }
+        let default_fut = (*self.default.borrow()).as_ref().map(|default| default.new_service(()));
+        let error_fut = (*self.error.borrow()).as_ref().map(|error| error.new_service(()));
+
+        Box::pin(async {
+            if let Some(fut_default) = default_fut {
+                inner.default = Some(fut_default.await?);
+            }
+
+            if let Some(fut_error) = error_fut {
+                inner.error = Some(fut_error.await?);
+            }
+
+            Ok(ProxyService(Rc::new(inner)))
+        })
     }
 }

@@ -5,7 +5,7 @@ pub(crate) mod forward_header;
 use crate::peer::HttpPeer;
 
 use crate::forwarder::client::ForwardClient;
-use crate::forwarder::error::ForwardError;
+pub use crate::forwarder::error::ForwardError;
 use actix::prelude::Stream;
 use actix_http::body::{BodyStream, MessageBody, SizedStream};
 use actix_http::header::{HeaderMap, HeaderName, TryIntoHeaderValue};
@@ -28,7 +28,7 @@ use std::rc::Rc;
 use std::str::FromStr;
 use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use tokio::task::{spawn_local, JoinHandle};
+use tokio::task::spawn_local;
 use tokio_util::codec::{BytesCodec, FramedRead};
 
 lazy_static! {
@@ -66,7 +66,7 @@ impl Forwarder {
         downstream_body: Payload,
         peer: Rc<HttpPeer>,
         origin_hostname: String,
-    ) -> Result<(HttpResponse, Option<JoinHandle<()>>), ForwardError> {
+    ) -> Result<HttpResponse, ForwardError> {
         let mut upstream_request_head = RequestHead::default();
 
         upstream_request_head.method = downstream_request_head.method().clone();
@@ -269,7 +269,7 @@ impl Forwarder {
             upstream_response.headers(),
         );
 
-        Ok((response_builder.streaming(upstream_response.take_payload()), None))
+        Ok(response_builder.streaming(upstream_response.take_payload()))
     }
 
     async fn upgrade(
@@ -277,7 +277,7 @@ impl Forwarder {
         peer: Rc<HttpPeer>,
         upstream_request_head: RequestHead,
         downstream_body: Payload,
-    ) -> Result<(HttpResponse, Option<JoinHandle<()>>), ForwardError> {
+    ) -> Result<HttpResponse, ForwardError> {
         let connector = ForwardClient::new_connector(vec![b"http/1.1".to_vec()], peer.allow_invalid_certificates);
 
         let connect = Connect {
@@ -302,17 +302,19 @@ impl Forwarder {
         let mut response_builder = HttpResponse::build(res_head.status);
         Self::map_headers(peer, &mut response_builder, res_head.version, res_head.status, res_head.headers());
 
-        let (backend_stream_read, backend_stream_write) = tokio::io::split(framed.into_parts().io);
+        let (upstream_stream_read, upstream_stream_write) = tokio::io::split(framed.into_parts().io);
 
-        let client_stream_read = PayloadIoStream {
+        let downstream_stream_read = PayloadIoStream {
             payload: downstream_body,
             state: PayloadIoStreamState::PendingChunk,
         };
 
-        let response_stream = into_bytes_stream(backend_stream_read);
+        // response_stream : copy upstream read stream to downstream write stream
+        let response_stream = into_bytes_stream(upstream_stream_read);
+        // copy future : copy downstream read stream to upstream write stream
         let copy_future = CopyFuture {
-            reader: client_stream_read,
-            writer: backend_stream_write,
+            reader: downstream_stream_read,
+            writer: upstream_stream_write,
             read_done: false,
             pos: 0,
             cap: 0,
@@ -321,9 +323,9 @@ impl Forwarder {
 
         // @TODO Instead of spawning a new task, we could create a specific Body that implements
         // pipelining between the two streams
-        let handle = spawn_local(copy_future);
+        spawn_local(copy_future);
 
-        Ok((response_builder.streaming(response_stream), Some(handle)))
+        Ok(response_builder.streaming(response_stream))
     }
 
     fn map_headers(

@@ -1,3 +1,4 @@
+use crate::error::ProxyError;
 use crate::forwarder::Forwarder;
 use crate::peer_resolver::HttpPeerResolver;
 use actix_service::boxed::BoxService;
@@ -5,15 +6,14 @@ use actix_web::{
     body::BoxBody,
     dev::{self, Service, ServiceRequest, ServiceResponse},
     error::Error,
-    FromRequest, HttpResponse, ResponseError,
+    FromRequest, HttpResponse,
 };
 use futures_util::future::LocalBoxFuture;
-use std::cell::RefCell;
 use std::ops::Deref;
 use std::rc::Rc;
-use tokio::task::JoinHandle;
 
 type HttpService = BoxService<ServiceRequest, ServiceResponse, Error>;
+type ErrorService = BoxService<ProxyError, HttpResponse, Error>;
 
 #[derive(Clone)]
 pub struct ProxyService(pub(crate) Rc<ProxyServiceInner>);
@@ -28,10 +28,9 @@ impl Deref for ProxyService {
 
 pub struct ProxyServiceInner {
     pub(crate) forwarder: Rc<Forwarder>,
-    // @TODO: we should retain a better object so we can transfer existing connection on restart
-    pub(crate) handlers: Rc<RefCell<Vec<JoinHandle<()>>>>,
     pub(crate) peer_resolver: Rc<HttpPeerResolver>,
     pub(crate) default: Option<HttpService>,
+    pub(crate) error: Option<ErrorService>,
 }
 
 impl Service<ServiceRequest> for ProxyService {
@@ -58,54 +57,62 @@ impl Service<ServiceRequest> for ProxyService {
             let downstream_body = match actix_web::web::Payload::from_request(&downstream_request_head, &mut request_payload).await {
                 Ok(payload) => payload,
                 Err(err) => {
-                    tracing::error!("cannot read request payload: {}", err);
-
-                    return Ok(
-                        ServiceRequest::from_request(downstream_request_head).into_response(HttpResponse::InternalServerError().finish())
-                    );
+                    return match this.0.error.as_ref() {
+                        Some(error) => error
+                            .call(ProxyError::CannotReadRequestBody(err))
+                            .await
+                            .map(|response| ServiceRequest::from_request(downstream_request_head).into_response(response)),
+                        None => Err(Error::from(ProxyError::CannotReadRequestBody(err))),
+                    };
                 }
             };
 
-            let fut = this
+            let resolved = this
                 .0
                 .peer_resolver
                 .call(downstream_request_head)
                 .await
-                .expect("peer resolver failed");
+                .expect("cannot resolve peer, should not happen since we don't return error");
 
-            let http_peer = match fut.peer {
+            let http_peer = match resolved.peer {
                 Some(peer) => peer,
                 None => match this.0.default.as_ref() {
                     Some(default) => {
-                        return default.call(ServiceRequest::from_request(fut.req)).await;
+                        return default.call(ServiceRequest::from_request(resolved.req)).await;
                     }
                     None => {
-                        tracing::error!("cannot resolve peer for request");
-
-                        return Ok(ServiceRequest::from_request(fut.req).into_response(HttpResponse::ServiceUnavailable().finish()));
+                        return match this.0.error.as_ref() {
+                            Some(error) => error
+                                .call(ProxyError::NoPeer)
+                                .await
+                                .map(|response| ServiceRequest::from_request(resolved.req).into_response(response)),
+                            None => Err(Error::from(ProxyError::NoPeer)),
+                        };
                     }
                 },
             };
 
-            let (upstream_response, handler) = match this
+            let upstream_response = match this
                 .0
                 .forwarder
-                .forward(&fut.req, downstream_body, http_peer, origin_hostname)
+                .forward(&resolved.req, downstream_body, http_peer, origin_hostname)
                 .await
             {
-                Ok((response, handler)) => (response, handler),
+                Ok(response) => response,
                 Err(err) => {
                     tracing::error!("cannot forward request: {}", err);
 
-                    return Ok(ServiceRequest::from_request(fut.req).into_response(err.error_response()));
+                    return match this.0.error.as_ref() {
+                        Some(error) => error
+                            .call(ProxyError::ForwardError(err))
+                            .await
+                            .map(|response| ServiceRequest::from_request(resolved.req).into_response(response)),
+                        None => Err(Error::from(ProxyError::ForwardError(err))),
+                    };
                 }
             };
 
-            if let Some(handler) = handler {
-                this.0.handlers.borrow_mut().push(handler);
-            }
-
-            Ok(ServiceRequest::from_request(fut.req).into_response(upstream_response))
+            Ok(ServiceRequest::from_request(resolved.req).into_response(upstream_response))
         })
     }
 }
